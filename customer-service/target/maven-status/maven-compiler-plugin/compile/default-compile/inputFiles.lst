@@ -1,0 +1,9 @@
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/persistence/model/Address.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/config/CouchbaseConfig.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/service/CustomerService.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/persistence/CustomerRepository.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/config/CustomerServiceConfig.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/gateway/ExternalServiceGateway.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/resources/CustomerResource.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/persistence/model/Customer.java
+/Users/sriramc/Desktop/customer-service/src/main/java/com/fooddelivery/persistence/model/Location.java

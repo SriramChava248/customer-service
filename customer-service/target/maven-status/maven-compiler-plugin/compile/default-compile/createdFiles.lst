@@ -1,0 +1,12 @@
+com/fooddelivery/persistence/model/Location$LocationBuilder.class
+com/fooddelivery/persistence/model/Address$AddressBuilder.class
+com/fooddelivery/config/CouchbaseConfig.class
+com/fooddelivery/persistence/model/Customer$CustomerBuilder.class
+com/fooddelivery/persistence/model/Location.class
+com/fooddelivery/persistence/model/Customer.class
+com/fooddelivery/persistence/model/Address.class
+com/fooddelivery/resources/CustomerResource.class
+com/fooddelivery/persistence/CustomerRepository.class
+com/fooddelivery/config/CustomerServiceConfig.class
+com/fooddelivery/service/CustomerService.class
+com/fooddelivery/gateway/ExternalServiceGateway.class
