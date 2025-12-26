@@ -93,6 +93,37 @@
             <scope>runtime</scope>
             <optional>true</optional>
         </dependency>
+
+        <!--
+            Purpose: Spring Security framework for authentication and authorization
+            Provides security features: JWT validation, role-based access control, CORS/CSRF protection
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+            Purpose: JWT (JSON Web Token) library for token parsing and validation
+            Provides: Token parsing, signature verification, expiration validation
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.12.3</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.12.3</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.12.3</version>
+            <scope>runtime</scope>
+        </dependency>
     </dependencies>
 
     <build>

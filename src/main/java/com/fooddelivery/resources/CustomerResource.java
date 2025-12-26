@@ -1,5 +1,6 @@
 package com.fooddelivery.resources;
 
+import com.fooddelivery.exception.CustomerNotFoundException;
 import com.fooddelivery.persistence.model.Customer;
 import com.fooddelivery.service.CustomerService;
 import jakarta.validation.Valid;
@@ -7,9 +8,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -27,44 +32,145 @@ public class CustomerResource {
         return ResponseEntity.status(HttpStatus.CREATED).body(createdCustomer);
     }
 
+    /**
+     * Get customer by ID.
+     * Allowed to: ADMIN (any customer) or CUSTOMER (own data only).
+     * RBAC: Method-level security checks if customer is accessing their own data.
+     */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER')")
     public ResponseEntity<Customer> getCustomerById(@PathVariable String id) {
         log.info("Resource: Fetching customer with ID: {}", id);
+        
+        // Check if customer is accessing their own data (unless admin)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String currentUserId = auth.getName();
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        
+        if (!isAdmin && !currentUserId.equals(id)) {
+            log.warn("Customer {} attempted to access another customer's data: {}", currentUserId, id);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        
+        // Exceptions will be handled by GlobalExceptionHandler
         Optional<Customer> customer = customerService.getCustomerById(id);
-        return customer.map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+        if (customer.isEmpty()) {
+            throw new CustomerNotFoundException("Customer not found with ID: " + id);
+        }
+        return ResponseEntity.ok(customer.get());
     }
 
+    /**
+     * Get customer by email.
+     * Allowed to: ADMIN (any customer) or CUSTOMER (own data only).
+     * RBAC: Method-level security checks if customer is accessing their own data.
+     */
     @GetMapping("/email/{email}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER')")
     public ResponseEntity<Customer> getCustomerByEmail(@PathVariable String email) {
         log.info("Resource: Fetching customer with email: {}", email);
-        Optional<Customer> customer = customerService.getCustomerByEmail(email);
-        return customer.map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+        
+        // Exceptions will be handled by GlobalExceptionHandler
+        Optional<Customer> customerOpt = customerService.getCustomerByEmail(email);
+        if (customerOpt.isEmpty()) {
+            throw new CustomerNotFoundException("Customer not found with email: " + email);
+        }
+        
+        Customer customer = customerOpt.get();
+        
+        // Check if customer is accessing their own data (unless admin)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String currentUserId = auth.getName();
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        
+        if (!isAdmin && !currentUserId.equals(customer.getId())) {
+            log.warn("Customer {} attempted to access another customer's data by email: {}", currentUserId, email);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        
+        return ResponseEntity.ok(customer);
     }
 
+    /**
+     * Update customer details.
+     * Allowed to: ADMIN (any customer) or CUSTOMER (own data only).
+     * RBAC: Method-level security checks if customer is updating their own data.
+     */
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER')")
     public ResponseEntity<Customer> updateCustomer(@PathVariable String id, @RequestBody Customer customerUpdate) {
         log.info("Resource: Updating customer with ID: {}", id);
-        try {
-            // Pass ID as separate parameter and customer object for partial update
-            Customer updatedCustomer = customerService.updateCustomer(id, customerUpdate);
-            return ResponseEntity.ok(updatedCustomer);
-        } catch (RuntimeException e) {
-            log.error("Resource: Error updating customer: {}", e.getMessage());
-            return ResponseEntity.notFound().build();
+        
+        // Check if customer is updating their own data (unless admin)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String currentUserId = auth.getName();
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        
+        if (!isAdmin && !currentUserId.equals(id)) {
+            log.warn("Customer {} attempted to update another customer's data: {}", currentUserId, id);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+        
+        // Exceptions will be handled by GlobalExceptionHandler
+        Customer updatedCustomer = customerService.updateCustomer(id, customerUpdate);
+        return ResponseEntity.ok(updatedCustomer);
     }
 
+    /**
+     * Delete customer (Admin-only).
+     * RBAC: Only ADMIN can delete customers.
+     */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deleteCustomer(@PathVariable String id) {
         log.info("Resource: Deleting customer with ID: {}", id);
+        // Exceptions will be handled by GlobalExceptionHandler
         boolean deleted = customerService.deleteCustomer(id);
-        return deleted ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+        if (!deleted) {
+            throw new CustomerNotFoundException("Customer not found with ID: " + id);
+        }
+        return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Get all customers (Admin-only).
+     * RBAC: Only ADMIN can view all customers.
+     */
     @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<Customer>> getAllCustomers() {
         log.info("Resource: Fetching all customers");
         List<Customer> customers = customerService.getAllCustomers();
         return ResponseEntity.ok(customers);
+    }
+
+    /**
+     * Update customer role (Admin-only endpoint).
+     * RBAC: Only ADMIN role can update customer roles.
+     * Request body: { "role": "CUSTOMER" } or { "role": "ADMIN" }
+     *
+     * @param id Customer ID whose role is being updated
+     * @param requestBody Request body containing new role (e.g., {"role": "ADMIN"})
+     * @return Updated customer
+     */
+    @PutMapping("/{id}/role")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Customer> updateCustomerRole(
+            @PathVariable String id,
+            @RequestBody Map<String, String> requestBody) {
+        
+        String newRole = requestBody.get("role");
+        if (newRole == null || newRole.isBlank()) {
+            log.warn("Role update request missing 'role' field for customer ID: {}", id);
+            return ResponseEntity.badRequest().build();
+        }
+        
+        log.info("Resource: Updating role for customer ID: {} to role: {}", id, newRole);
+        // Exceptions will be handled by GlobalExceptionHandler
+        Customer updatedCustomer = customerService.updateCustomerRole(id, newRole);
+        return ResponseEntity.ok(updatedCustomer);
     }
 }

@@ -44,6 +44,14 @@ public class Customer {
     private String phone;
 
     @Field
+    private String password; // Hashed password (BCrypt) - never store plaintext
+    // Note: Password validation is handled in service layer (required for create, optional for update)
+
+    @Field
+    private String role; // CUSTOMER, ADMIN, RESTAURANT_OWNER, DRIVER
+    // Note: Role validation is handled in service layer (defaults to CUSTOMER for new customers)
+
+    @Field
     private List<Address> addresses; // Null by default - only set when explicitly provided
 
     @Field
