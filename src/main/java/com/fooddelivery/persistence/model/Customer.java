@@ -11,11 +11,12 @@ import org.springframework.data.couchbase.core.mapping.Document;
 import org.springframework.data.couchbase.core.mapping.Field;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Customer entity representing a customer in the system.
- * Stored in Couchbase with document ID: customer::{customerId}
+ * Stored in Couchbase as a document.
  */
 @Document
 @Data
@@ -25,37 +26,36 @@ import java.util.List;
 public class Customer {
 
     @Id
-    private String id; // ID is optional for create (will be generated), required for update
+    private String id;
 
-    @Field
     @NotBlank(message = "Email is required")
     @Email(message = "Email must be valid")
+    @Field
     private String email;
 
     @Field
-    @NotBlank(message = "First name is required")
+    private String password; // Hashed password (BCrypt)
+
+    @Field
+    @Builder.Default
+    private String role = "CUSTOMER"; // CUSTOMER or ADMIN
+
+    @Field
     private String firstName;
 
     @Field
-    @NotBlank(message = "Last name is required")
     private String lastName;
 
     @Field
     private String phone;
 
     @Field
-    private String password; // Hashed password (BCrypt) - never store plaintext
-    // Note: Password validation is handled in service layer (required for create, optional for update)
+    @Builder.Default
+    private List<Address> addresses = new ArrayList<>();
 
     @Field
-    private String role; // CUSTOMER, ADMIN, RESTAURANT_OWNER, DRIVER
-    // Note: Role validation is handled in service layer (defaults to CUSTOMER for new customers)
-
-    @Field
-    private List<Address> addresses; // Null by default - only set when explicitly provided
-
-    @Field
-    private List<String> favoriteRestaurants; // Null by default - only set when explicitly provided
+    @Builder.Default
+    private List<String> favoriteRestaurants = new ArrayList<>();
 
     @Field
     private Instant createdAt;

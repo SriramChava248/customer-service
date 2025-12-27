@@ -1,5 +1,6 @@
 package com.fooddelivery.resources;
 
+import com.fooddelivery.exception.BadRequestException;
 import com.fooddelivery.exception.CustomerNotFoundException;
 import com.fooddelivery.persistence.model.Customer;
 import com.fooddelivery.service.CustomerService;
@@ -62,35 +63,33 @@ public class CustomerResource {
     }
 
     /**
-     * Get customer by email.
-     * Allowed to: ADMIN (any customer) or CUSTOMER (own data only).
-     * RBAC: Method-level security checks if customer is accessing their own data.
+     * Authentication endpoint for API Gateway.
+     * Validates customer credentials (email + password) and returns user details.
+     * This endpoint is unauthenticated (permitAll) - used by API Gateway during login flow.
+     * 
+     * Request body: { "email": "user@example.com", "password": "plaintextPassword" }
+     * Response: { "id": "customer-id", "email": "user@example.com", "role": "CUSTOMER" }
+     * 
+     * Security: Generic error message to prevent email enumeration.
      */
-    @GetMapping("/email/{email}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CUSTOMER')")
-    public ResponseEntity<Customer> getCustomerByEmail(@PathVariable String email) {
-        log.info("Resource: Fetching customer with email: {}", email);
+    @PostMapping("/auth/login")
+    public ResponseEntity<Map<String, String>> authenticate(@RequestBody Map<String, String> loginRequest) {
+        String email = loginRequest.get("email");
+        String password = loginRequest.get("password");
         
-        // Exceptions will be handled by GlobalExceptionHandler
-        Optional<Customer> customerOpt = customerService.getCustomerByEmail(email);
-        if (customerOpt.isEmpty()) {
-            throw new CustomerNotFoundException("Customer not found with email: " + email);
+        log.info("Resource: Authentication attempt for email: {}", email);
+        
+        // Validate input
+        if (email == null || email.isBlank() || password == null || password.isBlank()) {
+            log.warn("Login attempt with missing email or password");
+            throw new BadRequestException("Email and password are required");
         }
         
-        Customer customer = customerOpt.get();
+        // Authenticate customer - exceptions will be handled by GlobalExceptionHandler
+        Map<String, String> userDetails = customerService.authenticate(email, password);
         
-        // Check if customer is accessing their own data (unless admin)
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String currentUserId = auth.getName();
-        boolean isAdmin = auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-        
-        if (!isAdmin && !currentUserId.equals(customer.getId())) {
-            log.warn("Customer {} attempted to access another customer's data by email: {}", currentUserId, email);
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-        
-        return ResponseEntity.ok(customer);
+        log.info("Resource: Authentication successful for email: {}", email);
+        return ResponseEntity.ok(userDetails);
     }
 
     /**
@@ -117,7 +116,7 @@ public class CustomerResource {
         // Exceptions will be handled by GlobalExceptionHandler
         Customer updatedCustomer = customerService.updateCustomer(id, customerUpdate);
         return ResponseEntity.ok(updatedCustomer);
-    }
+        }
 
     /**
      * Delete customer (Admin-only).

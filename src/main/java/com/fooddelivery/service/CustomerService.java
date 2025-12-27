@@ -6,6 +6,7 @@ import com.fooddelivery.exception.BadRequestException;
 import com.fooddelivery.exception.CustomerNotFoundException;
 import com.fooddelivery.exception.DatabaseException;
 import com.fooddelivery.exception.InternalServerException;
+import com.fooddelivery.exception.UnauthorizedException;
 import com.fooddelivery.persistence.CustomerRepository;
 import com.fooddelivery.persistence.model.Customer;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -81,6 +84,19 @@ public class CustomerService {
      */
     public Customer createCustomer(Customer customer) {
         log.info("Creating customer with email: {}", customer.getEmail());
+        
+        // Validate email is provided
+        if (customer.getEmail() == null || customer.getEmail().isBlank()) {
+            log.warn("Customer creation attempted with missing email");
+            throw new BadRequestException("Email is required for customer creation");
+        }
+        
+        // Check if customer with this email already exists
+        boolean emailExists = customerExistsByEmail(customer.getEmail());
+        if (emailExists) {
+            log.warn("Customer creation failed: Email '{}' already exists", customer.getEmail());
+            throw new BadRequestException("Customer with email '" + customer.getEmail() + "' already exists");
+        }
         
         // Always generate ID server-side - ignore any ID provided by client
         // This ensures uniqueness and prevents ID collision attacks
@@ -166,6 +182,53 @@ public class CustomerService {
             log.error("Error fetching customer with email: {}", email, e);
             throw new DatabaseException("Failed to fetch customer by email: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Authenticate customer by email and password.
+     * Used by API Gateway during login flow.
+     * 
+     * @param email Customer email
+     * @param password Plaintext password
+     * @return Map containing user details (id, email, role) for JWT token generation
+     * @throws UnauthorizedException if email not found or password doesn't match
+     * @throws DatabaseException if database operation fails
+     */
+    public Map<String, String> authenticate(String email, String password) {
+        log.debug("Authenticating customer with email: {}", email);
+        
+        // Find customer by email - use repository directly to control exception handling
+        Optional<Customer> customerOpt;
+        try {
+            customerOpt = customerRepository.findByEmail(email);
+        } catch (Exception e) {
+            log.error("Error fetching customer with email: {} during authentication", email, e);
+            throw new DatabaseException("Failed to authenticate customer: " + e.getMessage(), e);
+        }
+        
+        // Generic error message to prevent email enumeration
+        if (customerOpt.isEmpty()) {
+            log.warn("Authentication failed: Customer not found for email: {}", email);
+            throw new UnauthorizedException("Invalid email or password");
+        }
+        
+        Customer customer = customerOpt.get();
+        
+        // Verify password
+        if (customer.getPassword() == null || !passwordEncoder.matches(password, customer.getPassword())) {
+            log.warn("Authentication failed: Invalid password for email: {}", email);
+            throw new UnauthorizedException("Invalid email or password");
+        }
+        
+        // Return user details for JWT token generation
+        Map<String, String> userDetails = new HashMap<>();
+        userDetails.put("id", customer.getId());
+        userDetails.put("email", customer.getEmail());
+        userDetails.put("role", customer.getRole() != null && !customer.getRole().isBlank() 
+                ? customer.getRole() : DEFAULT_ROLE);
+        
+        log.info("Authentication successful for customer: {}", customer.getId());
+        return userDetails;
     }
 
     /**

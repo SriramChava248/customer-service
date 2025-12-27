@@ -1,9 +1,12 @@
 package com.fooddelivery.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.couchbase.config.AbstractCouchbaseConfiguration;
 import org.springframework.data.couchbase.repository.config.EnableCouchbaseRepositories;
+import org.springframework.data.convert.CustomConversions;
 
 /**
  * Couchbase configuration class.
@@ -43,5 +46,17 @@ public class CouchbaseConfig extends AbstractCouchbaseConfiguration {
     @Override
     public String getBucketName() {
         return bucketName;
+    }
+
+    /**
+     * Override customConversions to mark it as @Primary.
+     * This resolves the bean conflict between Couchbase and Redis CustomConversions.
+     * Couchbase needs this bean for its mapping context, so it's marked as primary.
+     */
+    @Override
+    @Bean(name = "couchbaseCustomConversions")
+    @Primary
+    public CustomConversions customConversions() {
+        return super.customConversions();
     }
 }

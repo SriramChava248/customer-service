@@ -124,6 +124,15 @@
             <version>0.12.3</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!--
+            Purpose: Spring Data Redis for caching customer objects
+            Provides: RedisTemplate, connection management, JSON serialization support
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

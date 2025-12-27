@@ -19,6 +19,7 @@ import java.time.Instant;
  * 1. Catch all exceptions (known and unknown)
  * 2. Map exceptions to appropriate HTTP status codes:
  *    - 400 Bad Request: BadRequestException
+ *    - 401 Unauthorized: UnauthorizedException
  *    - 404 Not Found: CustomerNotFoundException
  *    - 500 Internal Server Error: InternalServerException, unknown exceptions
  *    - 502 Bad Gateway: DatabaseException
@@ -76,6 +77,27 @@ public class GlobalExceptionHandler {
         );
         
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    /**
+     * Handle UnauthorizedException - 401 Unauthorized
+     */
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ErrorResponse> handleUnauthorizedException(
+            UnauthorizedException ex,
+            HttpServletRequest request) {
+        
+        log.warn("Unauthorized access: {}", ex.getMessage());
+        
+        ErrorResponse errorResponse = buildErrorResponse(
+                HttpStatus.UNAUTHORIZED.value(),
+                "UnauthorizedException",
+                ex.getMessage(),
+                request.getRequestURI(),
+                includeStackTrace ? getStackTrace(ex) : null
+        );
+        
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
     }
 
     /**

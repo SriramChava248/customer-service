@@ -72,24 +72,25 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             
             // Configure request authorization
+            // IMPORTANT: More specific patterns must come BEFORE more general patterns
             .authorizeHttpRequests(auth -> auth
                 // Allow actuator endpoints (health checks) - no authentication required
                 .requestMatchers("/actuator/**").permitAll()
                 
-                // Public endpoint: Create customer (registration) - no authentication required
-                .requestMatchers(HttpMethod.POST, "/customers").permitAll()
+                // Public endpoints - no authentication required
+                .requestMatchers(HttpMethod.POST, "/customers").permitAll() // Create customer (registration)
+                .requestMatchers(HttpMethod.POST, "/customers/auth/login").permitAll() // Authentication endpoint for API Gateway
                 
-                // Admin-only endpoints
-                .requestMatchers(HttpMethod.GET, "/customers").hasRole("ADMIN") // Get all customers
-                .requestMatchers(HttpMethod.DELETE, "/customers/**").hasRole("ADMIN") // Delete customer
-                .requestMatchers(HttpMethod.PUT, "/customers/**/role").hasRole("ADMIN") // Update role
+                // Admin-only endpoints (specific patterns first)
+                .requestMatchers(HttpMethod.GET, "/customers").hasRole("ADMIN") // Get all customers (exact match)
+                .requestMatchers(HttpMethod.PUT, "/customers/*/role").hasRole("ADMIN") // Update role (specific: /customers/{id}/role)
+                .requestMatchers(HttpMethod.DELETE, "/customers/*").hasRole("ADMIN") // Delete customer (specific: /customers/{id})
                 
                 // Customer and Admin endpoints (method-level security will check ownership)
                 // GET /customers/{id} - allowed to ADMIN and CUSTOMER (method checks ownership)
-                // GET /customers/email/{email} - allowed to ADMIN and CUSTOMER (method checks ownership)
                 // PUT /customers/{id} - allowed to ADMIN and CUSTOMER (method checks ownership)
-                .requestMatchers(HttpMethod.GET, "/customers/**").hasAnyRole("ADMIN", "CUSTOMER")
-                .requestMatchers(HttpMethod.PUT, "/customers/**").hasAnyRole("ADMIN", "CUSTOMER")
+                .requestMatchers(HttpMethod.GET, "/customers/*").hasAnyRole("ADMIN", "CUSTOMER") // GET /customers/{id}
+                .requestMatchers(HttpMethod.PUT, "/customers/*").hasAnyRole("ADMIN", "CUSTOMER") // PUT /customers/{id} (but not /role)
                 
                 // All other requests require authentication (valid JWT token)
                 .anyRequest().authenticated()
