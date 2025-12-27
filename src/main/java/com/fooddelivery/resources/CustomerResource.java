@@ -7,6 +7,9 @@ import com.fooddelivery.service.CustomerService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -135,14 +138,41 @@ public class CustomerResource {
     }
 
     /**
-     * Get all customers (Admin-only).
-     * RBAC: Only ADMIN can view all customers.
+     * Get all customers with pagination (Admin-only endpoint).
+     * RBAC: Only ADMIN role can view all customers.
+     * 
+     * Query parameters:
+     * - page: Page number (0-indexed, default: 0)
+     * - size: Number of customers per page (default: 20, max: 100)
+     * 
+     * Examples:
+     * - GET /customers (uses defaults: page=0, size=20)
+     * - GET /customers?page=0&size=20
+     * - GET /customers?page=1&size=50
      */
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<List<Customer>> getAllCustomers() {
-        log.info("Resource: Fetching all customers");
-        List<Customer> customers = customerService.getAllCustomers();
+    public ResponseEntity<Page<Customer>> getAllCustomers(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        // Validate size to prevent excessive requests
+        if (size > 100) {
+            size = 100; // Cap at 100 per page
+            log.warn("Requested page size exceeds maximum (100), capping to 100");
+        }
+        if (size < 1) {
+            size = 20; // Minimum 1, default to 20
+            log.warn("Invalid page size, defaulting to 20");
+        }
+        if (page < 0) {
+            page = 0; // Minimum page is 0
+            log.warn("Invalid page number, defaulting to 0");
+        }
+        
+        log.info("Resource: Fetching customers - page: {}, size: {}", page, size);
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Customer> customers = customerService.getAllCustomers(pageable);
         return ResponseEntity.ok(customers);
     }
 

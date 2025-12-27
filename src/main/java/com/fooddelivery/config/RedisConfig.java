@@ -29,7 +29,11 @@ public class RedisConfig {
     /**
      * Configure RedisTemplate for Customer caching.
      * 
-     * Key serialization: String (customer IDs)
+     * Used for caching customer objects with TWO keys:
+     * 1. "customer:{id}" -> Customer object (for ID-based lookups)
+     * 2. "customer:email:{email}" -> Customer object (for email-based lookups)
+     * 
+     * Key serialization: String (customer IDs or email keys)
      * Value serialization: JSON (Customer objects)
      * 
      * @param connectionFactory Redis connection factory (auto-configured by Spring Boot)
@@ -51,7 +55,7 @@ public class RedisConfig {
                 JsonTypeInfo.As.PROPERTY
         );
 
-        // Key serializer: String (customer IDs like "1", "2", etc.)
+        // Key serializer: String (customer IDs like "1", "2", or email keys like "customer:email:user@example.com")
         template.setKeySerializer(new StringRedisSerializer());
         
         // Value serializer: JSON (Customer objects)

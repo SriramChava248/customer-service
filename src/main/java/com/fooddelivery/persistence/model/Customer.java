@@ -37,8 +37,7 @@ public class Customer {
     private String password; // Hashed password (BCrypt)
 
     @Field
-    @Builder.Default
-    private String role = "CUSTOMER"; // CUSTOMER or ADMIN
+    private String role; // CUSTOMER or ADMIN (default set in service layer)
 
     @Field
     private String firstName;
@@ -50,12 +49,10 @@ public class Customer {
     private String phone;
 
     @Field
-    @Builder.Default
-    private List<Address> addresses = new ArrayList<>();
+    private List<Address> addresses; // Default set in service layer
 
     @Field
-    @Builder.Default
-    private List<String> favoriteRestaurants = new ArrayList<>();
+    private List<String> favoriteRestaurants; // Default set in service layer
 
     @Field
     private Instant createdAt;

@@ -7,11 +7,15 @@ import com.fooddelivery.exception.CustomerNotFoundException;
 import com.fooddelivery.exception.DatabaseException;
 import com.fooddelivery.exception.InternalServerException;
 import com.fooddelivery.exception.UnauthorizedException;
+import com.fooddelivery.config.RedisConfig;
 import com.fooddelivery.persistence.CustomerRepository;
 import com.fooddelivery.persistence.model.Customer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.couchbase.core.CouchbaseTemplate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Customer service layer containing business logic for customer operations.
@@ -34,6 +39,11 @@ public class CustomerService {
     private final CustomerRepository customerRepository;
     private final CouchbaseTemplate couchbaseTemplate;
     private final PasswordEncoder passwordEncoder; // Injected from SecurityConfig bean
+    private final RedisTemplate<String, Customer> customerRedisTemplate; // For caching customer objects (by ID and email)
+    private final RedisConfig redisConfig; // For accessing cache TTL
+    
+    private static final String CUSTOMER_CACHE_KEY_PREFIX = "customer:";
+    private static final String EMAIL_CACHE_KEY_PREFIX = "customer:email:";
     
     private static final String CUSTOMER_COUNTER_KEY = "customer-counter";
     private static final long INITIAL_COUNTER_VALUE = 1L; // Start from 1
@@ -149,44 +159,172 @@ public class CustomerService {
             throw new DatabaseException("Failed to create customer: " + e.getMessage(), e);
         }
         
+        // Step 2: Cache the newly created customer in Redis (write-through strategy)
+        // Cache customer object with TWO keys:
+        // 1. customer:{id} -> Customer object (for ID-based lookups)
+        // 2. customer:email:{email} -> Customer object (for email-based lookups)
+        // Same object, different keys for fast lookups
+        try {
+            String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + savedCustomer.getId();
+            String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + savedCustomer.getEmail();
+            
+            // Cache customer object by ID
+            customerRedisTemplate.opsForValue().set(
+                    customerCacheKey,
+                    savedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            // Cache customer object by email (same object, different key)
+            customerRedisTemplate.opsForValue().set(
+                    emailCacheKey,
+                    savedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            log.debug("Cached customer with ID: {} and email: {} in Redis with TTL: {} seconds", 
+                    savedCustomer.getId(), savedCustomer.getEmail(), redisConfig.getCustomerCacheTtl());
+        } catch (Exception e) {
+            // Log cache error but don't fail the request - cache is best-effort
+            log.warn("Failed to cache customer with ID: {} in Redis. Continuing without cache.", 
+                    savedCustomer.getId(), e);
+        }
+        
         return savedCustomer;
     }
 
     /**
      * Get customer by ID.
+     * Uses cache-first strategy: checks Redis cache, then falls back to database.
      *
      * @param id Customer ID
      * @return Optional containing customer if found
      */
     public Optional<Customer> getCustomerById(String id) {
         log.debug("Fetching customer with ID: {}", id);
+        
+        // Step 3: Try cache first (cache-aside pattern)
         try {
-            return customerRepository.findById(id);
+            String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + id;
+            Customer cachedCustomer = customerRedisTemplate.opsForValue().get(customerCacheKey);
+            if (cachedCustomer != null) {
+                log.debug("Customer with ID: {} found in cache", id);
+                return Optional.of(cachedCustomer);
+            }
+        } catch (Exception e) {
+            log.warn("Cache lookup failed for customer ID: {}, falling back to database", id, e);
+        }
+        
+        // Cache miss - fetch from database
+        Optional<Customer> customerOpt;
+        try {
+            customerOpt = customerRepository.findById(id);
         } catch (Exception e) {
             log.error("Error fetching customer with ID: {}", id, e);
             throw new DatabaseException("Failed to fetch customer: " + e.getMessage(), e);
         }
+        
+        // If customer found, cache it for future requests (cache-aside pattern)
+        if (customerOpt.isPresent()) {
+            try {
+                String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + customerOpt.get().getId();
+                String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + customerOpt.get().getEmail();
+                
+                // Cache customer object by ID
+                customerRedisTemplate.opsForValue().set(
+                        customerCacheKey,
+                        customerOpt.get(),
+                        redisConfig.getCustomerCacheTtl(),
+                        TimeUnit.SECONDS
+                );
+                
+                // Cache customer object by email (same object, different key)
+                customerRedisTemplate.opsForValue().set(
+                        emailCacheKey,
+                        customerOpt.get(),
+                        redisConfig.getCustomerCacheTtl(),
+                        TimeUnit.SECONDS
+                );
+                
+                log.debug("Cached customer with ID: {} and email: {} after DB fetch", 
+                        customerOpt.get().getId(), customerOpt.get().getEmail());
+            } catch (Exception e) {
+                log.warn("Failed to cache customer with ID: {} after DB fetch", id, e);
+            }
+        }
+        
+        return customerOpt;
     }
 
     /**
      * Get customer by email.
+     * Uses cache-first strategy: checks Redis cache, then falls back to database.
      *
      * @param email Customer email
      * @return Optional containing customer if found
      */
     public Optional<Customer> getCustomerByEmail(String email) {
         log.debug("Fetching customer with email: {}", email);
+        
+        // Step 3: Try cache first (cache-aside pattern)
         try {
-            return customerRepository.findByEmail(email);
+            String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + email;
+            Customer cachedCustomer = customerRedisTemplate.opsForValue().get(emailCacheKey);
+            if (cachedCustomer != null) {
+                log.debug("Customer with email: {} found in cache", email);
+                return Optional.of(cachedCustomer);
+            }
+        } catch (Exception e) {
+            log.warn("Cache lookup failed for email: {}, falling back to database", email, e);
+        }
+        
+        // Cache miss - fetch from database
+        Optional<Customer> customerOpt;
+        try {
+            customerOpt = customerRepository.findByEmail(email);
         } catch (Exception e) {
             log.error("Error fetching customer with email: {}", email, e);
             throw new DatabaseException("Failed to fetch customer by email: " + e.getMessage(), e);
         }
+        
+        // If customer found, cache it for future requests (cache-aside pattern)
+        if (customerOpt.isPresent()) {
+            try {
+                String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + customerOpt.get().getId();
+                String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + customerOpt.get().getEmail();
+                
+                // Cache customer object by ID
+                customerRedisTemplate.opsForValue().set(
+                        customerCacheKey,
+                        customerOpt.get(),
+                        redisConfig.getCustomerCacheTtl(),
+                        TimeUnit.SECONDS
+                );
+                
+                // Cache customer object by email (same object, different key)
+                customerRedisTemplate.opsForValue().set(
+                        emailCacheKey,
+                        customerOpt.get(),
+                        redisConfig.getCustomerCacheTtl(),
+                        TimeUnit.SECONDS
+                );
+                
+                log.debug("Cached customer with ID: {} and email: {} after DB fetch", 
+                        customerOpt.get().getId(), customerOpt.get().getEmail());
+            } catch (Exception e) {
+                log.warn("Failed to cache customer with email: {} after DB fetch", email, e);
+            }
+        }
+        
+        return customerOpt;
     }
 
     /**
      * Authenticate customer by email and password.
      * Used by API Gateway during login flow.
+     * Uses getCustomerByEmail which implements cache-first strategy.
      * 
      * @param email Customer email
      * @param password Plaintext password
@@ -197,14 +335,8 @@ public class CustomerService {
     public Map<String, String> authenticate(String email, String password) {
         log.debug("Authenticating customer with email: {}", email);
         
-        // Find customer by email - use repository directly to control exception handling
-        Optional<Customer> customerOpt;
-        try {
-            customerOpt = customerRepository.findByEmail(email);
-        } catch (Exception e) {
-            log.error("Error fetching customer with email: {} during authentication", email, e);
-            throw new DatabaseException("Failed to authenticate customer: " + e.getMessage(), e);
-        }
+        // Find customer by email - uses cache-first strategy via getCustomerByEmail
+        Optional<Customer> customerOpt = getCustomerByEmail(email);
         
         // Generic error message to prevent email enumeration
         if (customerOpt.isEmpty()) {
@@ -233,18 +365,17 @@ public class CustomerService {
 
     /**
      * Check if customer exists by email.
+     * Uses cache-first strategy via getCustomerByEmail.
      *
      * @param email Customer email
      * @return true if customer exists, false otherwise
      */
     public boolean customerExistsByEmail(String email) {
         log.debug("Checking if customer exists with email: {}", email);
-        try {
-            return customerRepository.existsByEmail(email);
-        } catch (Exception e) {
-            log.error("Error checking if customer exists with email: {}", email, e);
-            throw new DatabaseException("Failed to check customer existence: " + e.getMessage(), e);
-        }
+        
+        // Use getCustomerByEmail which implements cache-first strategy
+        Optional<Customer> customerOpt = getCustomerByEmail(email);
+        return customerOpt.isPresent();
     }
 
     /**
@@ -284,11 +415,19 @@ public class CustomerService {
         
         Customer existingCustomer = existingCustomerOpt.get();
         
+        // Store old email before update (needed for cache invalidation if email changes)
+        String oldEmail = existingCustomer.getEmail();
+        boolean emailChanged = false;
+        
         // Partial update: only update fields that are provided (non-null)
         // Email
         if (customerUpdate.getEmail() != null && !customerUpdate.getEmail().isBlank()) {
-            existingCustomer.setEmail(customerUpdate.getEmail());
-            log.debug("Updating email for customer: {}", customerId);
+            String newEmail = customerUpdate.getEmail();
+            if (!newEmail.equals(oldEmail)) {
+                existingCustomer.setEmail(newEmail);
+                emailChanged = true;
+                log.debug("Updating email for customer: {} from '{}' to '{}'", customerId, oldEmail, newEmail);
+            }
         }
         
         // First name
@@ -318,8 +457,9 @@ public class CustomerService {
         
         // Role update is NOT allowed in regular updateCustomer API
         // Role can only be updated via separate updateRole API (admin-only)
-        if (customerUpdate.getRole() != null && !customerUpdate.getRole().equals(existingCustomer.getRole())) {
-            log.warn("Role update attempted via updateCustomer API for customer: {}. Role updates are not allowed here. Use updateRole API instead.", customerId);
+        // Ignore role field completely in updateCustomer - it should always be null in request
+        if (customerUpdate.getRole() != null) {
+            log.warn("Role field provided in updateCustomer API for customer: {}. Role updates are not allowed here. Use updateRole API instead. Ignoring role field.", customerId);
             // Do NOT update role - ignore the role field in updateCustomer
         }
         
@@ -350,6 +490,44 @@ public class CustomerService {
             throw new DatabaseException("Failed to save customer update: " + e.getMessage(), e);
         }
         
+        // Step 2: Update cache after successful DB save (write-through strategy)
+        // If email changed, invalidate old email cache key
+        // Update both ID and email cache keys with updated customer object
+        try {
+            String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + updatedCustomer.getId();
+            String newEmailCacheKey = EMAIL_CACHE_KEY_PREFIX + updatedCustomer.getEmail();
+            
+            // If email changed, delete old email cache key
+            if (emailChanged && oldEmail != null && !oldEmail.equals(updatedCustomer.getEmail())) {
+                String oldEmailCacheKey = EMAIL_CACHE_KEY_PREFIX + oldEmail;
+                customerRedisTemplate.delete(oldEmailCacheKey);
+                log.debug("Invalidated old email cache key for email: {}", oldEmail);
+            }
+            
+            // Update customer object cache by ID
+            customerRedisTemplate.opsForValue().set(
+                    customerCacheKey,
+                    updatedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            // Update customer object cache by email (same object, different key)
+            customerRedisTemplate.opsForValue().set(
+                    newEmailCacheKey,
+                    updatedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            log.debug("Updated cache for customer with ID: {} and email: {} with TTL: {} seconds", 
+                    updatedCustomer.getId(), updatedCustomer.getEmail(), redisConfig.getCustomerCacheTtl());
+        } catch (Exception e) {
+            // Log cache error but don't fail the request - cache is best-effort
+            log.warn("Failed to update cache for customer with ID: {} in Redis. Continuing without cache.", 
+                    updatedCustomer.getId(), e);
+        }
+        
         return updatedCustomer;
     }
 
@@ -376,28 +554,61 @@ public class CustomerService {
             return false;
         }
         
+        // Get customer email before deletion (needed for cache invalidation)
+        String customerEmail = null;
+        try {
+            Optional<Customer> customerOpt = customerRepository.findById(id);
+            if (customerOpt.isPresent()) {
+                customerEmail = customerOpt.get().getEmail();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fetch customer email for cache invalidation. Continuing with delete.", e);
+        }
+        
         try {
             customerRepository.deleteById(id);
             log.info("Customer deleted with ID: {}", id);
-            return true;
         } catch (Exception e) {
             log.error("Error deleting customer with ID: {}", id, e);
             throw new DatabaseException("Failed to delete customer: " + e.getMessage(), e);
         }
+        
+        // Step 2: Invalidate cache after successful DB deletion
+        // Delete both ID and email cache keys
+        try {
+            String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + id;
+            customerRedisTemplate.delete(customerCacheKey);
+            log.debug("Deleted customer cache key for ID: {}", id);
+            
+            if (customerEmail != null) {
+                String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + customerEmail;
+                customerRedisTemplate.delete(emailCacheKey);
+                log.debug("Deleted customer email cache key for email: {}", customerEmail);
+            }
+        } catch (Exception e) {
+            // Log cache error but don't fail the request - cache is best-effort
+            log.warn("Failed to invalidate cache for customer with ID: {} in Redis. Continuing without cache.", id, e);
+        }
+        
+        return true;
     }
 
     /**
-     * Get all customers.
-     *
-     * @return List of all customers
+     * Get all customers with pagination.
+     * Uses Spring Data pagination to efficiently fetch customers in pages.
+     * 
+     * @param pageable Pageable object containing page number and size
+     * @return Page containing customers for the requested page and pagination metadata
      */
-    public List<Customer> getAllCustomers() {
-        log.debug("Fetching all customers");
+    public Page<Customer> getAllCustomers(Pageable pageable) {
+        log.debug("Fetching customers - page: {}, size: {}", pageable.getPageNumber(), pageable.getPageSize());
         try {
-            return customerRepository.findAll();
+            // Spring Data Couchbase automatically converts Pageable to LIMIT/OFFSET in N1QL query
+            // This ensures only the requested page of customers is fetched from the database
+            return customerRepository.findAll(pageable);
         } catch (Exception e) {
-            log.error("Error fetching all customers", e);
-            throw new DatabaseException("Failed to fetch all customers: " + e.getMessage(), e);
+            log.error("Error fetching customers with pagination", e);
+            throw new DatabaseException("Failed to fetch customers: " + e.getMessage(), e);
         }
     }
 
@@ -456,6 +667,36 @@ public class CustomerService {
         } catch (Exception e) {
             log.error("Error saving role update for customer ID: {}", customerId, e);
             throw new DatabaseException("Failed to save role update: " + e.getMessage(), e);
+        }
+        
+        // Step 2: Update cache after successful DB save (write-through strategy)
+        // Update both ID and email cache keys with updated customer object
+        try {
+            String customerCacheKey = CUSTOMER_CACHE_KEY_PREFIX + updatedCustomer.getId();
+            String emailCacheKey = EMAIL_CACHE_KEY_PREFIX + updatedCustomer.getEmail();
+            
+            // Update customer object cache by ID
+            customerRedisTemplate.opsForValue().set(
+                    customerCacheKey,
+                    updatedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            // Update customer object cache by email (same object, different key)
+            customerRedisTemplate.opsForValue().set(
+                    emailCacheKey,
+                    updatedCustomer,
+                    redisConfig.getCustomerCacheTtl(),
+                    TimeUnit.SECONDS
+            );
+            
+            log.debug("Updated cache for customer with ID: {} after role update with TTL: {} seconds", 
+                    updatedCustomer.getId(), redisConfig.getCustomerCacheTtl());
+        } catch (Exception e) {
+            // Log cache error but don't fail the request - cache is best-effort
+            log.warn("Failed to update cache for customer with ID: {} in Redis. Continuing without cache.", 
+                    updatedCustomer.getId(), e);
         }
         
         return updatedCustomer;
